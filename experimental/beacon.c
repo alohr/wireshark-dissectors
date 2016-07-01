@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -17,10 +18,12 @@
 #define BEACON_GROUP "239.0.0.1"
 #define BEACON_PORT 4000
 
+#pragma pack(push, 1)
 typedef struct {
     uint32_t seq;
     uint64_t timestamp;
 } message_t;
+#pragma pack(pop)
 
 int create_socket(void)
 {
@@ -60,6 +63,8 @@ void sendloop(int sock)
     socklen_t dstlen = sizeof dst;
     message_t message = { 0, 0 };
     int n = 0;
+
+    assert(sizeof message == 12);
 
     memset(&dst, 9, sizeof dst);
     dst.sin_family = AF_INET;
