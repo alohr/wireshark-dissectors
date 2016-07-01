@@ -1,11 +1,15 @@
-Install Qt5 on MacOS
-=====================
+### Install Qt5 on MacOS
 
-sudo brew install qt5
-ls -l /usr/local/Cellar/qt5/5.3.2/mkspecs
-ls -l /usr/local/Cellar/qt5/5.3.0/mkspecs
-sudo ln -s /usr/local/Cellar/qt5/5.3.0/mkspecs /usr/local/mkspecs
-sudo ln -s /usr/local/Cellar/qt5/5.3.0/plugins /usr/local/plugins
+```
+brew install qt5
+brew link --force qt5
 
-see OS X section in https://wiki.wireshark.org/BuildingAndInstalling
+# check version
+ls -l /usr/local/Cellar/qt5/5.6.1-1/mkspecs
 
+# create symlinks
+sudo ln -s /usr/local/Cellar/qt5/5.6.1-1/mkspecs /usr/local/mkspecs
+sudo ln -s /usr/local/Cellar/qt5/5.6.1-1/plugins /usr/local/plugins
+```
+
+https://wiki.wireshark.org/BuildingAndInstalling
