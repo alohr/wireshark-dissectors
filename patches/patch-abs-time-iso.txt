@@ -1,0 +1,89 @@
+diff --git epan/time_fmt.h epan/time_fmt.h
+index a146e0f..7729efb 100644
+--- epan/time_fmt.h
++++ epan/time_fmt.h
+@@ -42,7 +42,9 @@ typedef enum {
+ 	/* Start at 1000 to avoid duplicating the values used in field_display_e */
+ 	ABSOLUTE_TIME_LOCAL = 1000,	/* local time in our time zone, with month and day */
+ 	ABSOLUTE_TIME_UTC,	/* UTC, with month and day */
+-	ABSOLUTE_TIME_DOY_UTC	/* UTC, with 1-origin day-of-year */
++	ABSOLUTE_TIME_DOY_UTC,	/* UTC, with 1-origin day-of-year */
++	ABSOLUTE_TIME_ISO_DATE_LOCAL,
++	ABSOLUTE_TIME_ISO_DATE_UTC
+ } absolute_time_display_e;
+ 
+ #endif /* __TIME_FMT_H__  */
+diff --git epan/to_str.c epan/to_str.c
+index 3e2aa7d..7c252d3 100644
+--- epan/to_str.c
++++ epan/to_str.c
+@@ -608,11 +608,13 @@ abs_time_to_str(wmem_allocator_t *scope, const nstime_t *abs_time, const absolut
+ 
+ 		case ABSOLUTE_TIME_UTC:
+ 		case ABSOLUTE_TIME_DOY_UTC:
++		case ABSOLUTE_TIME_ISO_DATE_UTC:
+ 			tmp = gmtime(&abs_time->secs);
+ 			zonename = "UTC";
+ 			break;
+ 
+ 		case ABSOLUTE_TIME_LOCAL:
++		case ABSOLUTE_TIME_ISO_DATE_LOCAL:
+ 			tmp = localtime(&abs_time->secs);
+ 			if (tmp) {
+ 				zonename = get_zonename(tmp);
+@@ -644,6 +646,32 @@ abs_time_to_str(wmem_allocator_t *scope, const nstime_t *abs_time, const absolut
+ 							(long)abs_time->nsecs);
+ 				}
+ 				break;
++				
++			case ABSOLUTE_TIME_ISO_DATE_UTC:
++			case ABSOLUTE_TIME_ISO_DATE_LOCAL:
++				if (show_zone) {
++					buf = wmem_strdup_printf(scope,
++								 "%04d%02d%02d %02d:%02d:%02d.%09ld %s",
++								 tmp->tm_year + 1900,
++								 tmp->tm_mon + 1,
++								 tmp->tm_mday,
++								 tmp->tm_hour,
++								 tmp->tm_min,
++								 tmp->tm_sec,
++								 (long)abs_time->nsecs,
++								 zonename);
++				} else {
++					buf = wmem_strdup_printf(scope,
++								 "%04d%02d%02d %02d:%02d:%02d.%09ld",
++								 tmp->tm_year + 1900,
++								 tmp->tm_mon + 1,
++								 tmp->tm_mday,
++								 tmp->tm_hour,
++								 tmp->tm_min,
++								 tmp->tm_sec,
++								 (long)abs_time->nsecs);
++				}
++				break;
+ 
+ 			case ABSOLUTE_TIME_UTC:
+ 			case ABSOLUTE_TIME_LOCAL:
+@@ -688,11 +716,13 @@ abs_time_secs_to_str(wmem_allocator_t *scope, const time_t abs_time, const absol
+ 
+ 		case ABSOLUTE_TIME_UTC:
+ 		case ABSOLUTE_TIME_DOY_UTC:
++		case ABSOLUTE_TIME_ISO_DATE_UTC:
+ 			tmp = gmtime(&abs_time);
+ 			zonename = "UTC";
+ 			break;
+ 
+ 		case ABSOLUTE_TIME_LOCAL:
++		case ABSOLUTE_TIME_ISO_DATE_LOCAL:
+ 			tmp = localtime(&abs_time);
+ 			if (tmp) {
+ 				zonename = get_zonename(tmp);
+@@ -725,6 +755,8 @@ abs_time_secs_to_str(wmem_allocator_t *scope, const time_t abs_time, const absol
+ 
+ 			case ABSOLUTE_TIME_UTC:
+ 			case ABSOLUTE_TIME_LOCAL:
++			case ABSOLUTE_TIME_ISO_DATE_UTC:
++			case ABSOLUTE_TIME_ISO_DATE_LOCAL:
+ 				if (show_zone) {
+ 					buf = wmem_strdup_printf(scope,
+ 							"%s %2d, %d %02d:%02d:%02d %s",

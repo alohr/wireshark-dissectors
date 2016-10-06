@@ -1,0 +1,162 @@
+diff --git a/epan/proto.c b/epan/proto.c
+index 42689a3..534995f 100644
+--- a/epan/proto.c
++++ b/epan/proto.c
+@@ -1801,7 +1801,34 @@ get_time_value(tvbuff_t *tvb, const gint start, const gint length, const guint e
+ 			}
+ 			break;
+ 
+-		default:
++	        case ENC_TIME_NANOS_TIME_T|ENC_BIG_ENDIAN:
++			/*
++			 * Nanoseconds since UNIX epoch, big-endian.
++			 */
++			if (length != 8) {
++				REPORT_DISSECTOR_BUG(wmem_strdup_printf(wmem_packet_scope(),
++                                        "Invalid length %d for ENC_TIME_NANOS_TIME_T", length));
++				break;
++			}
++			todsecs = tvb_get_ntoh64(tvb, start);
++			time_stamp->secs = todsecs / (time_t)1000000000;
++			time_stamp->nsecs = (int)(todsecs % (time_t)1000000000);
++			break;
++	        case ENC_TIME_NANOS_TIME_T|ENC_LITTLE_ENDIAN:
++			/*
++			 * Nanoseconds since UNIX epoch, little-endian.
++			 */
++			if (length != 8) {
++				REPORT_DISSECTOR_BUG(wmem_strdup_printf(wmem_packet_scope(),
++                                        "Invalid length %d for ENC_TIME_NANOS_TIME_T", length));
++				break;
++			}
++			todsecs = tvb_get_letoh64(tvb, start);
++			time_stamp->secs = todsecs / (time_t)1000000000;
++			time_stamp->nsecs = (int)(todsecs % (time_t)1000000000);
++			break;
++
++	default:
+ 			DISSECTOR_ASSERT_NOT_REACHED();
+ 			break;
+ 	}
+@@ -6358,6 +6385,9 @@ static const value_string hf_display[] = {
+ 	{ ABSOLUTE_TIME_LOCAL,		  "ABSOLUTE_TIME_LOCAL"		   },
+ 	{ ABSOLUTE_TIME_UTC,		  "ABSOLUTE_TIME_UTC"		   },
+ 	{ ABSOLUTE_TIME_DOY_UTC,	  "ABSOLUTE_TIME_DOY_UTC"	   },
++	{ ABSOLUTE_TIME_DOY_UTC,	  "ABSOLUTE_TIME_DOY_UTC"	   },
++	{ ABSOLUTE_TIME_ISO_DATE_LOCAL,   "ABSOLUTE_TIME_ISO_DATE_LOCAL"   },
++	{ ABSOLUTE_TIME_ISO_DATE_UTC,     "ABSOLUTE_TIME_ISO_DATE_UTC"     },
+ 	{ BASE_PT_UDP,			  "BASE_PT_UDP"			   },
+ 	{ BASE_PT_TCP,			  "BASE_PT_TCP"			   },
+ 	{ BASE_PT_DCCP,			  "BASE_PT_DCCP"		   },
+@@ -6628,7 +6658,9 @@ tmp_fld_check_assert(header_field_info *hfinfo)
+ 		case FT_ABSOLUTE_TIME:
+ 			if (!(hfinfo->display == ABSOLUTE_TIME_LOCAL ||
+ 			      hfinfo->display == ABSOLUTE_TIME_UTC   ||
+-			      hfinfo->display == ABSOLUTE_TIME_DOY_UTC)) {
++			      hfinfo->display == ABSOLUTE_TIME_DOY_UTC ||
++			      hfinfo->display == ABSOLUTE_TIME_ISO_DATE_LOCAL ||
++			      hfinfo->display == ABSOLUTE_TIME_ISO_DATE_UTC)) {
+ 				tmp_str = val_to_str_wmem(NULL, hfinfo->display, hf_display, "(Bit count: %d)");
+ 				g_error("Field '%s' (%s) is a %s but is being displayed as %s instead of as a time\n",
+ 					hfinfo->name, hfinfo->abbrev, ftype_name(hfinfo->type), tmp_str);
+diff --git a/epan/proto.h b/epan/proto.h
+index 63c380a..0a2d9fe 100644
+--- a/epan/proto.h
++++ b/epan/proto.h
+@@ -374,6 +374,7 @@ WS_DLL_PUBLIC WS_NORETURN void proto_report_dissector_bug(const char *message);
+ #define ENC_TIME_NTP                0x00000002	/* NTP times */
+ #define ENC_TIME_TOD                0x00000004	/* System/3xx and z/Architecture time-of-day clock */
+ #define ENC_TIME_NTP_BASE_ZERO      0x00000008  /* NTP times with different BASETIME */
++#define ENC_TIME_NANOS_TIME_T       0x00000010  /* Nanseconds since the UNIX epoch */
+ /*
+  * Historically, the only place the representation mattered for strings
+  * was with FT_UINT_STRINGs, where we had FALSE for the string length
+diff --git a/epan/time_fmt.h b/epan/time_fmt.h
+index a146e0f..7729efb 100644
+--- a/epan/time_fmt.h
++++ b/epan/time_fmt.h
+@@ -42,7 +42,9 @@ typedef enum {
+ 	/* Start at 1000 to avoid duplicating the values used in field_display_e */
+ 	ABSOLUTE_TIME_LOCAL = 1000,	/* local time in our time zone, with month and day */
+ 	ABSOLUTE_TIME_UTC,	/* UTC, with month and day */
+-	ABSOLUTE_TIME_DOY_UTC	/* UTC, with 1-origin day-of-year */
++	ABSOLUTE_TIME_DOY_UTC,	/* UTC, with 1-origin day-of-year */
++	ABSOLUTE_TIME_ISO_DATE_LOCAL,
++	ABSOLUTE_TIME_ISO_DATE_UTC
+ } absolute_time_display_e;
+ 
+ #endif /* __TIME_FMT_H__  */
+diff --git a/epan/to_str.c b/epan/to_str.c
+index ca4fa90..f6aaad1 100644
+--- a/epan/to_str.c
++++ b/epan/to_str.c
+@@ -440,11 +440,13 @@ abs_time_to_str(wmem_allocator_t *scope, const nstime_t *abs_time, const absolut
+ 
+ 		case ABSOLUTE_TIME_UTC:
+ 		case ABSOLUTE_TIME_DOY_UTC:
++		case ABSOLUTE_TIME_ISO_DATE_UTC:
+ 			tmp = gmtime(&abs_time->secs);
+ 			zonename = "UTC";
+ 			break;
+ 
+ 		case ABSOLUTE_TIME_LOCAL:
++		case ABSOLUTE_TIME_ISO_DATE_LOCAL:
+ 			tmp = localtime(&abs_time->secs);
+ 			if (tmp) {
+ 				zonename = get_zonename(tmp);
+@@ -477,6 +479,32 @@ abs_time_to_str(wmem_allocator_t *scope, const nstime_t *abs_time, const absolut
+ 				}
+ 				break;
+ 
++		        case ABSOLUTE_TIME_ISO_DATE_UTC:
++			case ABSOLUTE_TIME_ISO_DATE_LOCAL:
++				if (show_zone) {
++					buf = wmem_strdup_printf(scope,
++								 "%04d%02d%02d %02d:%02d:%02d.%09ld %s",
++								 tmp->tm_year + 1900,
++								 tmp->tm_mon + 1,
++								 tmp->tm_mday,
++								 tmp->tm_hour,
++								 tmp->tm_min,
++								 tmp->tm_sec,
++								 (long)abs_time->nsecs,
++								 zonename);
++				} else {
++					buf = wmem_strdup_printf(scope,
++								 "%04d%02d%02d %02d:%02d:%02d.%09ld",
++								 tmp->tm_year + 1900,
++								 tmp->tm_mon + 1,
++								 tmp->tm_mday,
++								 tmp->tm_hour,
++								 tmp->tm_min,
++								 tmp->tm_sec,
++								 (long)abs_time->nsecs);
++				}
++				break;
++
+ 			case ABSOLUTE_TIME_UTC:
+ 			case ABSOLUTE_TIME_LOCAL:
+ 				if (show_zone) {
+@@ -520,11 +548,13 @@ abs_time_secs_to_str(wmem_allocator_t *scope, const time_t abs_time, const absol
+ 
+ 		case ABSOLUTE_TIME_UTC:
+ 		case ABSOLUTE_TIME_DOY_UTC:
++		case ABSOLUTE_TIME_ISO_DATE_UTC:
+ 			tmp = gmtime(&abs_time);
+ 			zonename = "UTC";
+ 			break;
+ 
+ 		case ABSOLUTE_TIME_LOCAL:
++		case ABSOLUTE_TIME_ISO_DATE_LOCAL:
+ 			tmp = localtime(&abs_time);
+ 			if (tmp) {
+ 				zonename = get_zonename(tmp);
+@@ -557,6 +587,8 @@ abs_time_secs_to_str(wmem_allocator_t *scope, const time_t abs_time, const absol
+ 
+ 			case ABSOLUTE_TIME_UTC:
+ 			case ABSOLUTE_TIME_LOCAL:
++			case ABSOLUTE_TIME_ISO_DATE_UTC:
++			case ABSOLUTE_TIME_ISO_DATE_LOCAL:
+ 				if (show_zone) {
+ 					buf = wmem_strdup_printf(scope,
+ 							"%s %2d, %d %02d:%02d:%02d %s",
