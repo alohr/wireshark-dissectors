@@ -23,6 +23,7 @@ dissect_arista(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _
   proto_tree    *arista_tree;
   guint         offset = 0;
   guint         trailer_len;
+  guint32       arista_stamp;
   guint32       arista_hwticks;
 
   trailer_len = tvb_reported_length(tvb);
@@ -33,7 +34,9 @@ dissect_arista(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _
   if (tvb_captured_length(tvb) < 4)
     return 0;
 
-  arista_hwticks = tvb_get_guint32(tvb, offset, ENC_BIG_ENDIAN);
+  arista_stamp = tvb_get_guint32(tvb, offset, ENC_BIG_ENDIAN);
+  g_print("stamp = %x\n", arista_stamp);
+  arista_hwticks = ((arista_stamp & 0xffffff00) >> 1) | (arista_stamp & 0x7f);
   
   ti = proto_tree_add_item(tree, proto_arista, tvb, 0, (trailer_len & 0xb), ENC_NA);
   arista_tree = proto_item_add_subtree(ti, ett_arista);
@@ -50,7 +53,7 @@ proto_register_arista(void)
   static hf_register_info hf[] = {
     { &hf_arista_hwticks, {
         "HW ticks", "arista.hwticks",
-        FT_UINT32, BASE_HEX, NULL, 0x0,
+        FT_UINT32, BASE_DEC, NULL, 0x0,
         NULL, HFILL }},
   };
 
