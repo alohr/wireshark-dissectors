@@ -22,29 +22,28 @@ static dissector_handle_t beacon_handle;
 void proto_reg_handoff_beacon(void);
 
 
-static void nstimestamp_to_nstime(nstime_t *nstime, guint64 nstimestamp)
+static void to_nstime(nstime_t *nstime, guint64 t)
 {
   /* Split into seconds and nanoseconds. */
-  nstime->secs = nstimestamp / 1000000000;
-  nstime->nsecs = (int)(nstimestamp % 1000000000);
+  nstime->secs = t / 1000000000;
+  nstime->nsecs = (int)(t % 1000000000);
 }
 
 static int dissect_beacon(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U_, void* data _U_)
 {
   proto_tree *timestamp_tree;
-  guint32 seqnum = tvb_get_letohl(tvb, 0);
-  guint64 t = tvb_get_letoh64(tvb, 4);
-  nstime_t nstimestamp = {};
+  nstime_t timestamp;
   nstime_t tdiff;
+  guint32 seqnum = tvb_get_letohl(tvb, 0);
 
-  nstimestamp_to_nstime(&nstimestamp, t);
+  to_nstime(&timestamp, tvb_get_letoh64(tvb, 4));
 
   col_set_str(pinfo->cinfo, COL_PROTOCOL, "BEACON");
   col_clear(pinfo->cinfo, COL_INFO);
 
   col_add_fstr(pinfo->cinfo, COL_INFO, "SeqNum %u, Timestamp %s",
                seqnum,
-               abs_time_to_str(wmem_packet_scope(), &nstimestamp, ABSOLUTE_TIME_LOCAL, 0));
+               abs_time_to_str(wmem_packet_scope(), &timestamp, ABSOLUTE_TIME_LOCAL, 0));
 
   if (tree) {
     proto_item *ti = NULL;
@@ -59,10 +58,10 @@ static int dissect_beacon(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U
 
     // proto_tree_add_item(beacon_tree, hf_beacon_timestamp, tvb, offset, 8, ENC_TIME_NANOS_TIME_T|ENC_LITTLE_ENDIAN);
 
-    ti = proto_tree_add_time(beacon_tree, hf_beacon_timestamp, tvb, offset, 8, &nstimestamp);
+    ti = proto_tree_add_time(beacon_tree, hf_beacon_timestamp, tvb, offset, 8, &timestamp);
     timestamp_tree = proto_item_add_subtree(ti, ett_beacon_timestamp);
 
-    nstime_delta(&tdiff, &pinfo->fd->abs_ts, &nstimestamp);
+    nstime_delta(&tdiff, &pinfo->fd->abs_ts, &timestamp);
     ti = proto_tree_add_time(timestamp_tree, hf_beacon_tdiff, tvb, offset, 8, &tdiff);
     PROTO_ITEM_SET_GENERATED(ti);
   }
