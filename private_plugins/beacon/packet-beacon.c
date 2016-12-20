@@ -14,7 +14,6 @@ static range_t *beacon_udp_range = NULL;
 
 static int proto_beacon = -1;
 static int hf_beacon_seqnum = -1;
-static int hf_beacon_seqnum_ok = -1;
 static int hf_beacon_timestamp = -1;
 static int hf_beacon_tdiff = -1;
 
@@ -22,14 +21,15 @@ static gint ett_beacon = -1;
 static gint ett_beacon_seqnum = -1;
 static gint ett_beacon_timestamp = -1;
 
-static expert_field ei_beacon_seqnum_check = EI_INIT;
+static expert_field ei_beacon_seqnum_gap = EI_INIT;
 
 static dissector_handle_t beacon_handle;
 
 void proto_reg_handoff_beacon(void);
 
 typedef struct {
-  gboolean seqnum_check;
+  guint32 seqnum_expected;
+  gboolean seqnum_gap;
 } beacon_data_t;
 
 static void to_nstime(nstime_t *nstime, guint64 t)
@@ -57,17 +57,15 @@ static int dissect_beacon(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U
     }
 
     beacon_data = wmem_new(wmem_file_scope(), beacon_data_t);
-    beacon_data->seqnum_check = *prev_seqnum == 0 || (*prev_seqnum) + 1 == seqnum;
+    if (*prev_seqnum == 0) {
+      beacon_data->seqnum_expected = 0;
+      beacon_data->seqnum_gap = FALSE;
+    } else {
+      beacon_data->seqnum_expected = (*prev_seqnum) + 1;
+      beacon_data->seqnum_gap = beacon_data->seqnum_expected != seqnum;
+    }
 
     p_add_proto_data(wmem_file_scope(), pinfo, proto_beacon, 1, beacon_data);
-
-#if 0
-    g_print("frame %u prev seqnum %u ok %d\n",
-            pinfo->num,
-            *prev_seqnum,
-            beacon_data->seqnum_check);
-#endif
-
     *prev_seqnum = seqnum;
   }
 
@@ -79,9 +77,7 @@ static int dissect_beacon(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U
   col_add_fstr(pinfo->cinfo, COL_INFO, "SeqNum %u, Timestamp %s",
                seqnum,
                abs_time_to_str(wmem_packet_scope(), &timestamp, ABSOLUTE_TIME_LOCAL, 0));
-
   
-
   if (tree) {
     proto_item *ti = NULL;
     proto_tree *beacon_tree = NULL;
@@ -96,17 +92,14 @@ static int dissect_beacon(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U
     ti = proto_tree_add_item(beacon_tree, hf_beacon_seqnum, tvb, offset, 4, ENC_LITTLE_ENDIAN);
     seqnum_tree = proto_item_add_subtree(ti, ett_beacon_seqnum);
 
+    /* seqnum gap? */
     beacon_data = p_get_proto_data(wmem_file_scope(), pinfo, proto_beacon, 1);
-    ti = proto_tree_add_boolean(seqnum_tree, hf_beacon_seqnum_ok, tvb, offset, 4,
-                                beacon_data->seqnum_check);
-
-    if (!beacon_data->seqnum_check) {
-      proto_tree_add_expert_format(seqnum_tree, pinfo, &ei_beacon_seqnum_check, tvb, offset, 4,
-                                   "Sequence number gap detected");
-      expert_add_info_format(pinfo, ti, &ei_beacon_seqnum_check, "This is a TCP duplicate ack");
+    if (beacon_data->seqnum_gap) {
+      const char *summary = expert_get_summary(&ei_beacon_seqnum_gap);
+      proto_tree_add_expert_format(seqnum_tree, pinfo, &ei_beacon_seqnum_gap, tvb, offset, 4,
+                                   "%s; expected %u but received %u",
+                                   summary, beacon_data->seqnum_expected, seqnum);
     }
-
-    PROTO_ITEM_SET_GENERATED(ti);
     offset += 4;
 
     /* timestamp */
@@ -141,10 +134,6 @@ void proto_register_beacon(void)
         "SequenceNumber", "beacon.seqnum",
         FT_UINT32, BASE_DEC, NULL, 0x0,
         NULL, HFILL }},
-    { &hf_beacon_seqnum_ok, {
-        "Sequence Number Check", "beacon.seqnum_check",
-        FT_BOOLEAN, BASE_DEC, NULL, 0x0,
-        NULL, HFILL }},
     { &hf_beacon_timestamp, {
         "Timestamp", "beacon.timestamp",
         FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL, NULL, 0x0,
@@ -156,9 +145,9 @@ void proto_register_beacon(void)
   };
 
   static ei_register_info ei[] = {
-    { &ei_beacon_seqnum_check, {
-        "elf.invalid_segment_size", PI_SEQUENCE, PI_ERROR,
-        "Segment size is different then currently parsed bytes", EXPFILL }},
+    { &ei_beacon_seqnum_gap, {
+        "beacon.seqnum_gap", PI_SEQUENCE, PI_WARN,
+        "Sequence number gap", EXPFILL }},
   };
 
   /* Setup protocol subtree array */
