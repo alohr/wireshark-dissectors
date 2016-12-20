@@ -81,6 +81,7 @@ void sendloop(int sock)
  	    perror("sendto");
 	    exit(1);
         }
+        // 100ms
         usleep(100000);
     }
 }
