@@ -2,6 +2,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <net/if.h>
+#include <ifaddrs.h>
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,10 +12,22 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+
 #ifdef __MACH__
 #include <mach/clock.h>
 #include <mach/mach.h>
+#else
+#ifndef _SIZEOF_ADDR_IFREQ
+#define _SIZEOF_ADDR_IFREQ sizeof
 #endif
+#endif
+
+#include "cmdline.h"
+
+extern const char *__progname;
 
 #define BEACON_GROUP "239.0.0.1"
 #define BEACON_PORT 4000
@@ -22,19 +36,52 @@
 typedef struct {
     uint32_t seq;
     uint64_t timestamp;
+    char data[60];
 } message_t;
 #pragma pack(pop)
 
-int create_socket(void)
-{
-    int sock = 0;
+typedef struct {
+    struct gengetopt_args_info args_info;
+    int sock;
+    struct sockaddr ifaddr;
+} context_t;
 
-    if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+
+int get_interface(context_t *context)
+{
+    struct ifaddrs *ifaddrs, *ifa;
+    int match = -1;
+
+    if (getifaddrs(&ifaddrs) < 0) {
+        perror("getifaddrs");
+    }
+
+    ifa = ifaddrs;
+    while (ifa != NULL) {
+        if (ifa->ifa_addr->sa_family == AF_INET) {
+            if (strcmp(context->args_info.interface_arg, ifa->ifa_name) == 0) {
+                context->ifaddr = *ifa->ifa_addr;
+                match = 0;
+                break;
+            }
+        }
+        ifa = ifa->ifa_next;
+    }
+
+    freeifaddrs(ifaddrs);
+    return match;
+}
+
+int create_socket(context_t *context)
+{
+    context->sock = 0;
+
+    if ((context->sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         perror("socket");
         exit(1);
     }
 
-    return sock;
+    return context->sock;
 }
 
 uint64_t create_timestamp(void)
@@ -57,14 +104,26 @@ uint64_t create_timestamp(void)
     return ts.tv_sec * 1000000000UL + ts.tv_nsec;
 }
 
-void sendloop(int sock)
+void sendloop(context_t *context)
 {
     struct sockaddr_in dst;
     socklen_t dstlen = sizeof dst;
-    message_t message = { 0, 0 };
+    message_t message;
+    useconds_t delay = (useconds_t)context->args_info.delay_arg * 1000U;
     int n = 0;
 
-    assert(sizeof message == 12);
+    assert(sizeof message == 72);
+    memset(&message, 0, sizeof message);
+
+    if (context->args_info.verbose_flag) {
+        printf("interpacket delay = %lums\n", (unsigned long)context->args_info.delay_arg);
+        printf("identifier = '%s'\n", context->args_info.identifier_arg);
+    }
+
+    if (context->args_info.identifier_arg) {
+        snprintf(message.data, sizeof message.data, "%s",
+                 context->args_info.identifier_arg);
+    }
 
     memset(&dst, 9, sizeof dst);
     dst.sin_family = AF_INET;
@@ -75,24 +134,46 @@ void sendloop(int sock)
         message.seq++;
         message.timestamp = create_timestamp();
 
-        n = sendto(sock, &message, sizeof message, 0,
+        n = sendto(context->sock, &message, sizeof message, 0,
                    (struct sockaddr *) &dst, dstlen);
         if (n < 0) {
  	    perror("sendto");
 	    exit(1);
         }
-        // 100ms
-        usleep(100000);
+
+        if (context->args_info.count_arg != -1 &&
+            context->args_info.count_arg == message.seq) {
+            break;
+        }
+
+        usleep(delay);
     }
 }
 
 int main(int argc, char *argv[])
 {
-    int sock = 0;
+    context_t context = {};
+    struct gengetopt_args_info *args_info = &context.args_info;
 
-    sock = create_socket();
+    if (cmdline_parser(argc, argv, args_info) != 0)
+        exit(2);
 
-    sendloop(sock);
-    
+    if (get_interface(&context) < 0) {
+        fprintf(stderr, "%s: did not find interface \"%s\"\n",
+                __progname, context.args_info.interface_arg);
+        exit(1);
+    }
+
+    printf("using interface %s: %s\n", 
+           context.args_info.interface_arg,
+           inet_ntoa(((struct sockaddr_in *) &context.ifaddr)->sin_addr));
+
+    exit(0);
+
+    if (create_socket(&context) < 0)
+        exit(1);
+
+    sendloop(&context);
+
     return 0;
 }

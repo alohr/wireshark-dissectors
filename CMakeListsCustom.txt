@@ -23,8 +23,6 @@
 
 set(CUSTOM_PLUGIN_SRC_DIR
 	private_plugins/arista
-	private_plugins/beacon
-	private_plugins/eobi3
 )
 
 #
