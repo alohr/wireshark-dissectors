@@ -16,6 +16,7 @@ static int proto_beacon = -1;
 static int hf_beacon_seqnum = -1;
 static int hf_beacon_timestamp = -1;
 static int hf_beacon_tdiff = -1;
+static int hf_beacon_ident = -1;
 
 static gint ett_beacon = -1;
 static gint ett_beacon_seqnum = -1;
@@ -110,7 +111,12 @@ static int dissect_beacon(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree _U
 
     nstime_delta(&tdiff, &pinfo->fd->abs_ts, &timestamp);
     ti = proto_tree_add_time(timestamp_tree, hf_beacon_tdiff, tvb, offset, 8, &tdiff);
+    offset += 8;
+
     PROTO_ITEM_SET_GENERATED(ti);
+
+    /* identifier */
+    ti = proto_tree_add_item(beacon_tree, hf_beacon_ident, tvb, offset, 60, ENC_STRING);
   }
 
   return tvb_captured_length(tvb);
@@ -142,6 +148,10 @@ void proto_register_beacon(void)
         "Time Difference", "beacon.tdiff",
         FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0,
         "Difference from capture timestamp", HFILL }},
+    { &hf_beacon_ident, {
+        "Identifier", "beacon.ident",
+        FT_STRINGZ, BASE_NONE, NULL, 0x0,
+        "Beacon identifier string", HFILL }},
   };
 
   static ei_register_info ei[] = {

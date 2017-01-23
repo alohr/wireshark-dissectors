@@ -20,9 +20,6 @@
 #include <mach/clock.h>
 #include <mach/mach.h>
 #else
-#ifndef _SIZEOF_ADDR_IFREQ
-#define _SIZEOF_ADDR_IFREQ sizeof
-#endif
 #endif
 
 #include "cmdline.h"
@@ -42,8 +39,10 @@ typedef struct {
 
 typedef struct {
     struct gengetopt_args_info args_info;
+    int verbose;
     int sock;
     struct sockaddr ifaddr;
+
 } context_t;
 
 
@@ -59,6 +58,11 @@ int get_interface(context_t *context)
     ifa = ifaddrs;
     while (ifa != NULL) {
         if (ifa->ifa_addr->sa_family == AF_INET) {
+            if (context->verbose) {
+                printf("%s: %s\n",
+                       ifa->ifa_name,
+                       inet_ntoa(((struct sockaddr_in *) ifa->ifa_addr)->sin_addr));
+            }
             if (strcmp(context->args_info.interface_arg, ifa->ifa_name) == 0) {
                 context->ifaddr = *ifa->ifa_addr;
                 match = 0;
@@ -74,11 +78,19 @@ int get_interface(context_t *context)
 
 int create_socket(context_t *context)
 {
+    struct in_addr *addr;
+
     context->sock = 0;
 
     if ((context->sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         perror("socket");
         exit(1);
+    }
+
+    addr = &((struct sockaddr_in *) &context->ifaddr)->sin_addr;
+    if (setsockopt(context->sock, IPPROTO_IP, IP_MULTICAST_IF,
+                   addr, sizeof *addr) != 0) {
+        perror("setsockopt");
     }
 
     return context->sock;
@@ -115,9 +127,10 @@ void sendloop(context_t *context)
     assert(sizeof message == 72);
     memset(&message, 0, sizeof message);
 
-    if (context->args_info.verbose_flag) {
-        printf("interpacket delay = %lums\n", (unsigned long)context->args_info.delay_arg);
-        printf("identifier = '%s'\n", context->args_info.identifier_arg);
+    if (context->verbose) {
+        printf("count = %d\n", context->args_info.count_arg);
+        printf("delay = %lums\n", (unsigned long)context->args_info.delay_arg);
+        printf("identifier = \"%s\"\n", context->args_info.identifier_arg);
     }
 
     if (context->args_info.identifier_arg) {
@@ -158,6 +171,8 @@ int main(int argc, char *argv[])
     if (cmdline_parser(argc, argv, args_info) != 0)
         exit(2);
 
+    context.verbose = context.args_info.verbose_flag;
+
     if (get_interface(&context) < 0) {
         fprintf(stderr, "%s: did not find interface \"%s\"\n",
                 __progname, context.args_info.interface_arg);
@@ -167,8 +182,6 @@ int main(int argc, char *argv[])
     printf("using interface %s: %s\n", 
            context.args_info.interface_arg,
            inet_ntoa(((struct sockaddr_in *) &context.ifaddr)->sin_addr));
-
-    exit(0);
 
     if (create_socket(&context) < 0)
         exit(1);
