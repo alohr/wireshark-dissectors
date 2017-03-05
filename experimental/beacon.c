@@ -1,17 +1,20 @@
 #include <assert.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <net/if.h>
-#include <ifaddrs.h>
-#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <ifaddrs.h>
+#include <arpa/inet.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <errno.h>
 
+#include <linux/net_tstamp.h>
+#include <linux/sockios.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
@@ -41,6 +44,7 @@ typedef struct {
     struct gengetopt_args_info args_info;
     int verbose;
     int sock;
+    char *ifname;
     struct sockaddr ifaddr;
 
 } context_t;
@@ -53,17 +57,19 @@ int get_interface(context_t *context)
 
     if (getifaddrs(&ifaddrs) < 0) {
         perror("getifaddrs");
+        return -1;
     }
 
     ifa = ifaddrs;
     while (ifa != NULL) {
-        if (ifa->ifa_addr->sa_family == AF_INET) {
+        if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET) {
             if (context->verbose) {
                 printf("%s: %s\n",
                        ifa->ifa_name,
                        inet_ntoa(((struct sockaddr_in *) ifa->ifa_addr)->sin_addr));
             }
             if (strcmp(context->args_info.interface_arg, ifa->ifa_name) == 0) {
+                context->ifname = strdup(ifa->ifa_name);
                 context->ifaddr = *ifa->ifa_addr;
                 match = 0;
                 break;
@@ -74,6 +80,66 @@ int get_interface(context_t *context)
 
     freeifaddrs(ifaddrs);
     return match;
+}
+
+#ifdef __MACH__
+static int init_hwts(context_t *context)
+{
+    return -1;
+}
+#else
+static int init_hwts(context_t *context)
+{
+    struct ifreq ifreq = {};
+    struct hwtstamp_config req, cfg = {};
+
+    strncpy(ifreq.ifr_name, context->ifname, sizeof(ifreq.ifr_name) - 1);
+    ifreq.ifr_data = (void *) &req;
+
+    cfg.tx_type = HWTSTAMP_TX_ON;
+    req = cfg;
+    
+    if (ioctl(context->sock, SIOCSHWTSTAMP, &ifreq)) {
+        fprintf(stderr, "%s: ioctl %s SIOCSHWTSTAMP: %s\n",
+                __progname,
+                ifreq.ifr_name,
+                strerror(errno));
+        return -1;
+    }
+
+    if (memcmp(&cfg, &req, sizeof(cfg))) {
+        // from linux ptp
+        printf("driver changed our HWTSTAMP options");
+        printf("tx_type   %d not %d", cfg.tx_type, req.tx_type);
+
+        if (cfg.tx_type != req.tx_type)
+            return -1;
+    }
+
+    return 0;
+
+
+}
+#endif
+
+int init_timestamping(context_t *context)
+{
+    int flags = SOF_TIMESTAMPING_TX_HARDWARE |
+                SOF_TIMESTAMPING_RX_HARDWARE |
+                SOF_TIMESTAMPING_RAW_HARDWARE;
+
+    if (init_hwts(context) < 0)
+        return -1;
+
+    if (setsockopt(context->sock, SOL_SOCKET, SO_TIMESTAMPING,
+                   &flags, sizeof flags) < 0) {
+        fprintf(stderr, "%s: ioctl SO_TIMESTAMPING failed: %s",
+                __progname,
+                strerror(errno));
+        return -1;
+    }
+
+    return 0;
 }
 
 int create_socket(context_t *context)
@@ -91,6 +157,13 @@ int create_socket(context_t *context)
     if (setsockopt(context->sock, IPPROTO_IP, IP_MULTICAST_IF,
                    addr, sizeof *addr) != 0) {
         perror("setsockopt");
+        return -1;
+    }
+
+    if (context->args_info.hwts_flag) {
+        if (init_timestamping(context) < 0)
+            return -1;
+        printf("hardware timestamp enabled\n");
     }
 
     return context->sock;
@@ -179,8 +252,8 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    printf("using interface %s: %s\n", 
-           context.args_info.interface_arg,
+    printf("using interface %s: %s\n",
+           context.ifname,
            inet_ntoa(((struct sockaddr_in *) &context.ifaddr)->sin_addr));
 
     if (create_socket(&context) < 0)

@@ -3,6 +3,7 @@ version ""
 
 option "verbose" v "verbose output" flag off
 option "interface" i "network interface" string optional typestr="name" default="lo"
+option "hwts" T "use hardware timestamping" flag off
 option "identifier" I "identifier to placed in payload" string optional typestr="string" default="beacon"
 option "count" c "stop after n packets" int optional typestr="n" default="-1"
 option "delay" d "delay between packets" int optional typestr="ms" default="100"

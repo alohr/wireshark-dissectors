@@ -1,0 +1,11 @@
+https://www.kernel.org/doc/Documentation/networking/timestamping.txt
+
+https://docs.fedoraproject.org/en-US/Fedora_Draft_Documentation/0.1/html/System_Administrators_Guide/Using_PTP.html
+
+
+http://processors.wiki.ti.com/images/c/cb/Testing_timestamp_using_timestamping_app.pdf
+
+http://processors.wiki.ti.com/index.php/ICSS_PTP_1588_Developer_Guide?keyMatch=timestamping&tisearch=Search-EN
+
+https://groups.google.com/forum/#!topic/beagleboard/QHXb2hm72A8
+http://www.ti.com/lit/an/snla098a/snla098a.pdf

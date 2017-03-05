@@ -1,6 +1,8 @@
-CFLAGS = -g -Wall
+DEBUGFLAGS = -g
+CFLAGS = $(DEBUGFLAGS) -Wall
+LDFLAGS = $(DEBUGFLAGS)
 
-GENGETOPT = /usr/bin/gengetopt
+GENGETOPT = /usr/local/bin/gengetopt
 
 SRCS = beacon.c
 OBJS = cmdline.o $(SRCS:.c=.o)
@@ -12,13 +14,10 @@ PROG = beacon
 .c.o:
 	$(CC) -c $(CFLAGS) -o $@ $<
 
-.cpp.o:
-	$(CXX) -c $(CXXFLAGS) -o $@ $<
-
 all:: $(PROG)
 
 $(PROG): $(OBJS)
-	$(CXX) $(LDFLAGS) -o $@ $^ $(LIBS)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 cmdline.c: beacon.ggo
 	$(GENGETOPT) < $<
@@ -26,5 +25,5 @@ cmdline.c: beacon.ggo
 cmdline.o: cmdline.c
 
 clean::
-	/bin/rm -f $(OBJS) *~
+	/bin/rm -f $(PROG) $(OBJS) core *~
 

@@ -44,6 +44,8 @@ struct gengetopt_args_info
   char * interface_arg;	/**< @brief network interface (default='lo').  */
   char * interface_orig;	/**< @brief network interface original value given at command line.  */
   const char *interface_help; /**< @brief network interface help description.  */
+  int hwts_flag;	/**< @brief use hardware timestamping (default=off).  */
+  const char *hwts_help; /**< @brief use hardware timestamping help description.  */
   char * identifier_arg;	/**< @brief identifier to placed in payload (default='beacon').  */
   char * identifier_orig;	/**< @brief identifier to placed in payload original value given at command line.  */
   const char *identifier_help; /**< @brief identifier to placed in payload help description.  */
@@ -58,6 +60,7 @@ struct gengetopt_args_info
   unsigned int version_given ;	/**< @brief Whether version was given.  */
   unsigned int verbose_given ;	/**< @brief Whether verbose was given.  */
   unsigned int interface_given ;	/**< @brief Whether interface was given.  */
+  unsigned int hwts_given ;	/**< @brief Whether hwts was given.  */
   unsigned int identifier_given ;	/**< @brief Whether identifier was given.  */
   unsigned int count_given ;	/**< @brief Whether count was given.  */
   unsigned int delay_given ;	/**< @brief Whether delay was given.  */
