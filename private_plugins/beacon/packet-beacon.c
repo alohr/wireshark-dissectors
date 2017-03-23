@@ -126,7 +126,7 @@ static void reinit_beacon(void)
 {
   dissector_delete_uint_range("udp.port", beacon_udp_range, beacon_handle);
   g_free(beacon_udp_range);
-  beacon_udp_range = range_copy(global_beacon_udp_range);
+  beacon_udp_range = range_copy(wmem_epan_scope(), global_beacon_udp_range);
   dissector_add_uint_range("udp.port", beacon_udp_range, beacon_handle);
 }
 
@@ -187,7 +187,7 @@ void proto_register_beacon(void)
 
   beacon_module = prefs_register_protocol(proto_beacon, proto_reg_handoff_beacon);
 
-  range_convert_str(&global_beacon_udp_range, UDP_DEFAULT_RANGE, 65535);
+  range_convert_str(wmem_epan_scope(), &global_beacon_udp_range, UDP_DEFAULT_RANGE, 65535);
 
   prefs_register_range_preference(
     beacon_module,
