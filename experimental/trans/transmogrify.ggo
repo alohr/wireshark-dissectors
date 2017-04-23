@@ -1,0 +1,8 @@
+package "transmogrify"
+version ""
+
+option "readfile" r "input file" string
+option "savefile" w "output file" string
+option "identifier" I "identifier to placed in payload" string optional typestr="string" default="beacon"
+
+
