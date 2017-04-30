@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <ifaddrs.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
@@ -29,8 +30,9 @@
 
 extern const char *__progname;
 
-#define BEACON_GROUP "239.0.0.1"
-#define BEACON_PORT 4000
+static const char BEACON_GROUP[] = "239.0.0.1";
+static const int BEACON_PORT = 4000;
+static const int POLL_TIMEOUT_MS = 10;
 
 #pragma pack(push, 1)
 typedef struct {
@@ -91,21 +93,17 @@ static int init_hwts(context_t *context)
 static int init_hwts(context_t *context)
 {
     struct ifreq ifreq = {};
-    struct hwtstamp_config req, cfg = {};
+    struct hwtstamp_config req = {}, cfg = {};
 
     strncpy(ifreq.ifr_name, context->ifname, sizeof(ifreq.ifr_name) - 1);
     ifreq.ifr_data = (void *) &req;
 
     cfg.tx_type = HWTSTAMP_TX_ON;
+    
     req = cfg;
     
-    if (ioctl(context->sock, SIOCSHWTSTAMP, &ifreq)) {
-        fprintf(stderr, "%s: ioctl %s SIOCSHWTSTAMP: %s\n",
-                __progname,
-                ifreq.ifr_name,
-                strerror(errno));
-        return -1;
-    }
+    if (ioctl(context->sock, SIOCSHWTSTAMP, &ifreq))
+        err(1, "ioctl(SIOCSHWTSTAMP, %s)", ifreq.ifr_name);
 
     if (memcmp(&cfg, &req, sizeof(cfg))) {
         // from linux ptp
@@ -116,6 +114,8 @@ static int init_hwts(context_t *context)
             return -1;
     }
 
+    printf("HWTS: ioctl(SIOCSHWTSTAMP) ok\n");
+
     return 0;
 
 
@@ -125,7 +125,7 @@ static int init_hwts(context_t *context)
 int init_timestamping(context_t *context)
 {
     int flags = SOF_TIMESTAMPING_TX_HARDWARE |
-                SOF_TIMESTAMPING_RX_HARDWARE |
+                SOF_TIMESTAMPING_TX_SOFTWARE |
                 SOF_TIMESTAMPING_RAW_HARDWARE;
 
     if (init_hwts(context) < 0)
@@ -133,11 +133,18 @@ int init_timestamping(context_t *context)
 
     if (setsockopt(context->sock, SOL_SOCKET, SO_TIMESTAMPING,
                    &flags, sizeof flags) < 0) {
-        fprintf(stderr, "%s: ioctl SO_TIMESTAMPING failed: %s",
-                __progname,
-                strerror(errno));
-        return -1;
+        err(1, "setsockopt(SO_TIMESTAMPING)");
     }
+
+
+    printf("HWTS: setsockopt(SO_TIMESTAMPING) ok\n");
+
+    flags = 1;
+    if (setsockopt(context->sock, SOL_SOCKET, SO_SELECT_ERR_QUEUE,
+                   &flags, sizeof flags) < 0) {
+        err("setsockopt(SO_SELECT_ERR_QUEUE)");
+    }
+    printf("HWTS: setsockopt(SO_SELECT_ERR_QUEUE) ok\n");
 
     return 0;
 }
@@ -147,22 +154,19 @@ int create_socket(context_t *context)
     struct in_addr *addr;
 
     context->sock = 0;
-
-    if ((context->sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-        perror("socket");
-        exit(1);
-    }
+    if ((context->sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+        err(1, "socket");
 
     addr = &((struct sockaddr_in *) &context->ifaddr)->sin_addr;
     if (setsockopt(context->sock, IPPROTO_IP, IP_MULTICAST_IF,
                    addr, sizeof *addr) != 0) {
-        perror("setsockopt");
-        return -1;
+        err(1, "setsockopt(IPPROTO_IP, IP_MULTICAST_IF)");
     }
 
     if (context->args_info.hwts_flag) {
         if (init_timestamping(context) < 0)
             return -1;
+        
         printf("hardware timestamp enabled\n");
     }
 
@@ -189,11 +193,72 @@ uint64_t create_timestamp(void)
     return ts.tv_sec * 1000000000UL + ts.tv_nsec;
 }
 
+void udpsend(const message_t *message)
+{
+
+}
+
+int sk_receive(void *buf, int buflen, context_t *context)
+{
+    char control[256];
+    int level, type;
+    struct cmsghdr *cm;
+    struct iovec iov = { buf, buflen };
+    struct msghdr msg;
+    struct timespec *sw, *ts = NULL;
+
+    memset(control, 0, sizeof(control));
+    memset(&msg, 0, sizeof(msg));
+        
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+
+    struct pollfd pfd = { context->sock, POLLPRI | POLLERR, 0 };
+    int n = poll(&pfd, 1, POLL_TIMEOUT_MS);
+    printf("poll returned %d\n", n);
+               
+    if (n < 0) {
+        err(1, "poll for tx timestamp failed");
+    } else if (n == 0) {
+        errx(1, "timed out while polling for tx timestamp");
+    } else if (!(pfd.revents & POLLPRI)) {
+        errx(1, "poll for tx timestamp woke up on non ERR event");
+    }
+
+    n = recvmsg(context->sock, &msg, MSG_ERRQUEUE);
+    if (n < 0)
+        err(1, "recvmsg for tx timestamp");
+
+    for (cm = CMSG_FIRSTHDR(&msg); cm != NULL; cm = CMSG_NXTHDR(&msg, cm)) {
+        level = cm->cmsg_level;
+        type  = cm->cmsg_type;
+        if (SOL_SOCKET == level && SO_TIMESTAMPING == type) {
+            if (cm->cmsg_len < sizeof(*ts) * 3) {
+                warnx("short SO_TIMESTAMPING message");
+                return -1;
+            }
+            ts = (struct timespec *) CMSG_DATA(cm);
+        }
+    }
+
+    printf("timespec[0] = %lu.%u\n", ts[0].tv_sec, ts[0].tv_nsec);
+    printf("timespec[1] = %lu.%u\n", ts[1].tv_sec, ts[1].tv_nsec);
+    printf("timespec[2] = %lu.%u\n", ts[2].tv_sec, ts[2].tv_nsec);
+        
+    return n;
+}
+
+
+
 void sendloop(context_t *context)
 {
     struct sockaddr_in dst;
     socklen_t dstlen = sizeof dst;
     message_t message;
+    unsigned char junk[1600];
+
     useconds_t delay = (useconds_t)context->args_info.delay_arg * 1000U;
     int n = 0;
 
@@ -211,7 +276,7 @@ void sendloop(context_t *context)
                  context->args_info.identifier_arg);
     }
 
-    memset(&dst, 9, sizeof dst);
+    memset(&dst, 0, sizeof dst);
     dst.sin_family = AF_INET;
     dst.sin_addr.s_addr = inet_addr(BEACON_GROUP);
     dst.sin_port = htons(BEACON_PORT);
@@ -220,11 +285,12 @@ void sendloop(context_t *context)
         message.seq++;
         message.timestamp = create_timestamp();
 
-        n = sendto(context->sock, &message, sizeof message, 0,
-                   (struct sockaddr *) &dst, dstlen);
-        if (n < 0) {
- 	    perror("sendto");
-	    exit(1);
+        if (sendto(context->sock, &message, sizeof message, 0,
+                   (struct sockaddr *) &dst, dstlen) < 0)
+            err(1, "sendto");
+
+        if (context->args_info.hwts_flag) {
+            sk_receive(junk, sizeof message, context);
         }
 
         if (context->args_info.count_arg != -1 &&
