@@ -1,0 +1,29 @@
+#!/usr/bin/env python
+# -*-python-*-
+
+import fileinput
+import re
+
+def process(line):
+    pattern = r'^([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2})\s+([^\s]+)'
+    match = re.search(pattern, line)
+    if match:
+        manuf = match.group(4)
+        manuf = manuf.replace('"', '\\"')
+
+        print('{{ {{ 0x{}, 0x{}, 0x{} }}, "{}:{}:{}_{}" }},'.format(
+            match.group(1),
+            match.group(2),
+            match.group(3),
+            match.group(1),
+            match.group(2),
+            match.group(3),
+            manuf
+        ))
+
+def main():
+    for line in fileinput.input():
+        process(line)
+
+if __name__ == '__main__':
+    main()
