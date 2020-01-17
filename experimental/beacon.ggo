@@ -5,7 +5,12 @@ option "verbose" v "verbose output" flag off
 option "interface" i "network interface" string optional typestr="name" default="lo"
 option "hwts" T "use hardware timestamping" flag off
 option "identifier" I "identifier to placed in payload" string optional typestr="string" default="beacon"
+
+section "timing"
+
 option "count" c "stop after n packets" int optional typestr="n" default="-1"
 option "delay" d "delay between packets" int optional typestr="ms" default="100"
 
+section "flags"
 
+option "dscp" - "set DSCP flag in IP header" optional values="cs1","cs2","cs3","cs4","cs5","cs6","cs7"

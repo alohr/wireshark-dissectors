@@ -14,13 +14,17 @@
 #include <unistd.h>
 #include <errno.h>
 
+#ifdef __linux__
 #include <linux/net_tstamp.h>
 #include <linux/sockios.h>
+#endif
+
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
 
 #ifdef __MACH__
+#include <err.h>
 #include <mach/clock.h>
 #include <mach/mach.h>
 #else
@@ -33,6 +37,23 @@ extern const char *__progname;
 static const char BEACON_GROUP[] = "239.0.0.1";
 static const int BEACON_PORT = 4000;
 static const int POLL_TIMEOUT_MS = 10;
+
+typedef struct {
+    const char *name;
+    int value;
+} dscp_t;
+
+static const dscp_t DSCP[] = {
+    { "cs0", 0b000000 },
+    { "cs1", 0b001000 },
+    { "cs2", 0b010000 },
+    { "cs3", 0b011000 },
+    { "cs4", 0b100000 },
+    { "cs5", 0b101000 },
+    { "cs6", 0b110000 },
+    { "cs7", 0b111000 },
+    { NULL, 0 }
+};
 
 #pragma pack(push, 1)
 typedef struct {
@@ -84,6 +105,19 @@ int get_interface(context_t *context)
     return match;
 }
 
+int get_dscp(const char *name)
+{
+    const dscp_t *dscp = DSCP;
+
+    while (dscp->name) {
+        if (strcmp(dscp->name, name) == 0)
+            return dscp->value;
+        dscp++;
+    }
+
+    return 0;
+}
+
 #ifdef __MACH__
 static int init_hwts(context_t *context)
 {
@@ -99,9 +133,9 @@ static int init_hwts(context_t *context)
     ifreq.ifr_data = (void *) &req;
 
     cfg.tx_type = HWTSTAMP_TX_ON;
-    
+
     req = cfg;
-    
+
     if (ioctl(context->sock, SIOCSHWTSTAMP, &ifreq))
         err(1, "ioctl(SIOCSHWTSTAMP, %s)", ifreq.ifr_name);
 
@@ -122,6 +156,7 @@ static int init_hwts(context_t *context)
 }
 #endif
 
+#ifdef __linux__
 int init_timestamping(context_t *context)
 {
     int flags = SOF_TIMESTAMPING_TX_HARDWARE |
@@ -148,10 +183,17 @@ int init_timestamping(context_t *context)
 
     return 0;
 }
+#else
+int init_timestamping(context_t *context)
+{
+    err(1, "hardware timestamping not supported");
+}
+#endif
+
 
 int create_socket(context_t *context)
 {
-    struct in_addr *addr;
+    struct in_addr *addr = NULL;
 
     context->sock = 0;
     if ((context->sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
@@ -166,9 +208,22 @@ int create_socket(context_t *context)
     if (context->args_info.hwts_flag) {
         if (init_timestamping(context) < 0)
             return -1;
-        
+
         printf("hardware timestamp enabled\n");
     }
+
+    if (context->args_info.dscp_given) {
+        const int dscp = get_dscp(context->args_info.dscp_arg);
+        const int tos = dscp << 2;
+
+        printf("setting dscp value 0x%02x (tos 0x%02x)\n", dscp, tos);
+
+        if (setsockopt(context->sock, IPPROTO_IP, IP_TOS,
+                       &tos, sizeof tos) < 0) {
+            err(1, "setsockopt(IPPROTO_IP, IP_TOS)");
+        }
+    }
+
 
     return context->sock;
 }
@@ -198,6 +253,7 @@ void udpsend(const message_t *message)
 
 }
 
+#ifdef __linux__
 int sk_receive(void *buf, int buflen, context_t *context)
 {
     char control[256];
@@ -209,7 +265,7 @@ int sk_receive(void *buf, int buflen, context_t *context)
 
     memset(control, 0, sizeof(control));
     memset(&msg, 0, sizeof(msg));
-        
+
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
     msg.msg_control = control;
@@ -218,7 +274,7 @@ int sk_receive(void *buf, int buflen, context_t *context)
     struct pollfd pfd = { context->sock, POLLPRI | POLLERR, 0 };
     int n = poll(&pfd, 1, POLL_TIMEOUT_MS);
     printf("poll returned %d\n", n);
-               
+
     if (n < 0) {
         err(1, "poll for tx timestamp failed");
     } else if (n == 0) {
@@ -246,10 +302,15 @@ int sk_receive(void *buf, int buflen, context_t *context)
     printf("timespec[0] = %lu.%u\n", ts[0].tv_sec, ts[0].tv_nsec);
     printf("timespec[1] = %lu.%u\n", ts[1].tv_sec, ts[1].tv_nsec);
     printf("timespec[2] = %lu.%u\n", ts[2].tv_sec, ts[2].tv_nsec);
-        
+
     return n;
 }
-
+#else
+int sk_receive(void *buf, int buflen, context_t *context)
+{
+    return 0;
+}
+#endif
 
 
 void sendloop(context_t *context)
